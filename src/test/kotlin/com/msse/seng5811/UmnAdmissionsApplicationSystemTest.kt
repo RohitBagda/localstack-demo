@@ -1,3 +1,6 @@
+package com.msse.seng5811
+
+import UmnAdmissionsApplication
 import com.amazonaws.AbortedException
 import com.amazonaws.services.kinesis.AmazonKinesis
 import com.amazonaws.services.kinesis.model.PutRecordsRequest
@@ -5,8 +8,6 @@ import com.amazonaws.services.kinesis.model.PutRecordsRequestEntry
 import com.amazonaws.services.s3.AmazonS3
 import com.amazonaws.services.s3.model.ListObjectsRequest
 import com.amazonaws.util.IOUtils
-import com.msse.seng5811.UmnApplicant
-import com.msse.seng5811.UmnStudent
 import com.msse.seng5811.localstack.kinesis.LocalKinesisStreams
 import com.msse.seng5811.localstack.kinesis.LocalstackKinesisUtility
 import com.msse.seng5811.utils.ObjectMapper
