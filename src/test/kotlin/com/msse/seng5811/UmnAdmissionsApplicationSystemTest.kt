@@ -71,16 +71,23 @@ class UmnAdmissionsApplicationSystemTest {
         val putRecordsRequest = createPutRecordsRequest<UmnApplicant>(allApplicants.shuffled())
         kinesis.putRecords(putRecordsRequest)
 
+        // Wait for all records to publish successfully
         Thread.sleep(1000)
 
-        // verify we get expected results within 5 seconds
+        // Verify we get expected results within 5 seconds
         within(Duration.ofSeconds(5)) {
             // Retrieve output from S3.
             val umnStudents: List<UmnStudent> = retrieveObjectsFromS3Bucket<UmnStudent>(s3, testOutputBucket)
-            // Verification
+
+            // Assert only and all eligible candidates are converted into UMN students
             assertThat(umnStudents.size).isEqualTo(eligibleApplicants.size)
-            assertThat(umnStudents.map { it.umnApplicant }).containsExactlyInAnyOrderElementsOf(eligibleApplicants)
-            log.info("UmnAdmissions System Passed!")
+            assertThat(umnStudents.map { it.umnApplicant })
+                .containsOnlyOnceElementsOf(eligibleApplicants)
+                .doesNotContainAnyElementsOf(ineligibleApplicants)
+
+            // Assert UMN IDs for each student is unique.
+            assertThat(umnStudents.map { it.umnId }.distinct().size).isEqualTo(eligibleApplicants.size)
+            log.info("UmnAdmissions System Test Passed!")
         }
     }
 
@@ -139,8 +146,8 @@ class UmnAdmissionsApplicationSystemTest {
     }
 
     /**
-     * Creates a [PutRecordsRequest] for a list of [T] objects to kinesis using the serialization time
-     * as the partition key for kinesis transmission.
+     * Creates a [PutRecordsRequest] for a list of [T] objects to kinesis by serializing them and using the
+     * serialization time as the partition key for kinesis transmission.
      */
     @OptIn(ExperimentalTime::class)
     private inline fun <reified T> createPutRecordsRequest(objects: List<T>): PutRecordsRequest {
