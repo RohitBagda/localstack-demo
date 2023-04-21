@@ -1,6 +1,5 @@
 package com.msse.seng5811
 
-import UmnAdmissionsApplication
 import com.amazonaws.AbortedException
 import com.amazonaws.services.kinesis.AmazonKinesis
 import com.amazonaws.services.kinesis.model.PutRecordsRequest
@@ -19,6 +18,8 @@ import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 import java.nio.ByteBuffer
 import java.time.Duration
 import kotlin.random.Random
@@ -33,19 +34,27 @@ class UmnAdmissionsApplicationSystemTest {
     private val testOutputBucket = LocalS3Buckets.OUTPUT_BUCKET
     private var daemonThread: Thread = Thread()
 
+    companion object {
+        val log: Logger = LoggerFactory.getLogger(UmnAdmissionsApplicationSystemTest::class.java)
+    }
+
     @BeforeEach
     @AfterAll
     fun sanitize() {
         // Kill the application after execution of each test.
-        try { daemonThread.interrupt() } catch (e: AbortedException) { println("End of test!") }
+        try { daemonThread.interrupt() } catch (e: AbortedException) { log.info("End of test.") }
 
         // Cleanup
         LocalstackS3Utility.refreshS3Bucket(testOutputBucket)
+        LocalstackKinesisUtility.refreshKinesisStream(testInputStream)
+        log.info("Cleaned up test objects!")
     }
 
     @Test
     fun `umnAdmissionsApplication -- mix of eligible and ineligible applicants -- only eligible applicants are admitted`() {
         // SETUP
+
+        log.info("Starting UmnAdmissionsApplications System Test")
         val eligibleApplicants = createUmnApplicants(count = Random.nextInt(0, 50), eligible = true)
         val ineligibleApplicants = createUmnApplicants(count = Random.nextInt(0, 50), eligible = false)
         val allApplicants: List<UmnApplicant> = eligibleApplicants + ineligibleApplicants
@@ -71,6 +80,7 @@ class UmnAdmissionsApplicationSystemTest {
             // Verification
             assertThat(umnStudents.size).isEqualTo(eligibleApplicants.size)
             assertThat(umnStudents.map { it.umnApplicant }).containsExactlyInAnyOrderElementsOf(eligibleApplicants)
+            log.info("UmnAdmissions System Passed!")
         }
     }
 
