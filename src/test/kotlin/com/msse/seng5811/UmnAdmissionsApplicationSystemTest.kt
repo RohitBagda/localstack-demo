@@ -58,6 +58,8 @@ class UmnAdmissionsApplicationSystemTest {
         val eligibleApplicants = createUmnApplicants(count = Random.nextInt(0, 50), eligible = true)
         val ineligibleApplicants = createUmnApplicants(count = Random.nextInt(0, 50), eligible = false)
         val allApplicants: List<UmnApplicant> = eligibleApplicants + ineligibleApplicants
+        log.info("Successfully published ${allApplicants.size} applicants to kinesis.")
+        log.info("Eligible Applicants: ${eligibleApplicants.size}, Ineligible Applicants: ${ineligibleApplicants.size}")
 
         // Start application under test.
         startApplication(
@@ -70,9 +72,6 @@ class UmnAdmissionsApplicationSystemTest {
         // Publish applicants to kinesis
         val putRecordsRequest = createPutRecordsRequest<UmnApplicant>(allApplicants.shuffled())
         kinesis.putRecords(putRecordsRequest)
-
-        // Wait for all records to publish successfully
-        Thread.sleep(1000)
 
         // Verify we get expected results within 5 seconds
         within(Duration.ofSeconds(5)) {
