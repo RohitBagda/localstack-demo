@@ -35,9 +35,9 @@ object UmnAdmissionsApplication {
     }
 
     /**
-     * Starts a long-running processing loop that continuously reads data that continuously reads a list [UmnApplicant]
-     * records from a specific kinesis stream and converts all eligible applicants to [UmnStudent] records and places
-     * them into a specific S3 bucket.
+     * Starts a long-running processing loop that continuously reads a list [UmnApplicant] records from a specific
+     * kinesis stream and converts all eligible applicants to [UmnStudent] records and places them into a specific S3
+     * bucket.
      */
     fun start(inputStreamName: String, outputBucketName: String, kinesis: AmazonKinesis, s3: AmazonS3) {
         log.info("University of Minnesota is now accepting applicants!")
