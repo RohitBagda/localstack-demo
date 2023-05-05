@@ -1,3 +1,4 @@
+import com.amazonaws.services.kinesis.AmazonKinesis
 import com.amazonaws.services.kinesis.model.PutRecordsRequest
 import com.amazonaws.services.kinesis.model.PutRecordsRequestEntry
 import com.msse.seng5811.UmnApplicant
@@ -9,15 +10,15 @@ import kotlin.random.Random
 import kotlin.time.ExperimentalTime
 import kotlin.time.measureTimedValue
 
-val kinesis = LocalstackKinesisUtility.getKinesisClient()
-val testInputStream = LocalKinesisStreams.INPUT_STREAM
+val kinesis: AmazonKinesis = LocalstackKinesisUtility.getKinesisClient()
+val inputStream: String = LocalKinesisStreams.INPUT_STREAM
 
 val eligibleApplicants: List<UmnApplicant> = createUmnApplicants(count = Random.nextInt(0, 50), eligible = true)
 val ineligibleApplicants: List<UmnApplicant> = createUmnApplicants(count = Random.nextInt(0, 50), eligible = false)
 val allApplicants: List<UmnApplicant> = eligibleApplicants + ineligibleApplicants
 
 // Publish applicants to kinesis
-val putRecordsRequest = createPutRecordsRequest<UmnApplicant>(allApplicants.shuffled())
+val putRecordsRequest: PutRecordsRequest = createPutRecordsRequest<UmnApplicant>(allApplicants.shuffled())
 kinesis.putRecords(putRecordsRequest)
 
 println("Successfully published ${allApplicants.size} applicants to kinesis.")
@@ -59,5 +60,5 @@ inline fun <reified T> createPutRecordsRequest(objects: List<T>): PutRecordsRequ
 
     return PutRecordsRequest()
         .withRecords(putRecordsRequestEntries)
-        .withStreamName(testInputStream)
+        .withStreamName(inputStream)
 }
