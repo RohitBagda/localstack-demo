@@ -32,7 +32,6 @@ dependencies {
 
     // AWS
     implementation("com.amazonaws:aws-java-sdk-kinesis:$awsSdkVersion")
-    implementation("com.amazonaws:aws-java-sdk-s3:$awsSdkVersion")
     implementation("com.amazonaws:aws-java-sdk-core:$awsSdkVersion")
 
     // Test

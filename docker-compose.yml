@@ -8,7 +8,7 @@ services:
       - "127.0.0.1:4566:4566"
     environment:
       - DOCKER_HOST=unix:///var/run/docker.sock
-      - SERVICES='kinesis, s3'
+      - SERVICES='kinesis'
     volumes:
       - "./mocks/:/etc/localstack/init/ready.d/"  # ready hook
       - "${LOCALSTACK_VOLUME_DIR:-./volume}:/var/lib/localstack"

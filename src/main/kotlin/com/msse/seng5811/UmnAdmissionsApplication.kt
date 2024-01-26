@@ -3,18 +3,18 @@ package com.msse.seng5811
 import com.amazonaws.AbortedException
 import com.amazonaws.services.kinesis.AmazonKinesis
 import com.amazonaws.services.kinesis.model.*
-import com.amazonaws.services.s3.AmazonS3
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import com.msse.seng5811.localstack.kinesis.LocalKinesisStreams
 import com.msse.seng5811.localstack.kinesis.LocalstackKinesisUtility
 import com.msse.seng5811.utils.ObjectMapper
-import com.msse.seng5811.localstack.s3.LocalS3Buckets
-import com.msse.seng5811.localstack.s3.LocalstackS3Utility
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import java.nio.ByteBuffer
 import java.time.Instant
 import java.util.UUID
+import kotlin.time.ExperimentalTime
+import kotlin.time.measureTimedValue
 
 /**
  * A simple application that converts eligible [UmnApplicant] objects into [UmnStudent] object.
@@ -28,9 +28,8 @@ object UmnAdmissionsApplication {
         // Start the application locally with the help of Localstack mocked resource name and AWS clients.
         start(
             inputStreamName = LocalKinesisStreams.INPUT_STREAM,
-            outputBucketName = LocalS3Buckets.OUTPUT_BUCKET,
+            outputStreamName = LocalKinesisStreams.OUTPUT_STREAM,
             kinesis = LocalstackKinesisUtility.getKinesisClient(),
-            s3 = LocalstackS3Utility.getS3Client()
         )
     }
 
@@ -39,11 +38,11 @@ object UmnAdmissionsApplication {
      * kinesis stream and converts all eligible applicants to [UmnStudent] records and places them into a specific S3
      * bucket.
      */
-    fun start(inputStreamName: String, outputBucketName: String, kinesis: AmazonKinesis, s3: AmazonS3) {
+    fun start(inputStreamName: String, outputStreamName: String, kinesis: AmazonKinesis) {
         log.info("University of Minnesota is now accepting applicants!")
         log.info("Waiting for applicants on kinesis $inputStreamName...")
 
-        var shardIterator = getShardIterator(inputStreamName, kinesis)
+        var shardIterator = LocalstackKinesisUtility.getShardIterator(inputStreamName, kinesis)
         while (shardIterator != null) {
             // Get Records from shard
             val getRecordsResult = try {
@@ -67,20 +66,20 @@ object UmnAdmissionsApplication {
 
             log.info("Received ${umnApplicants.size} umn applicants...")
 
-            // Convert UmnApplicants with gpa > 3.0 to UmnStudents and publish to s3
+            // Convert UmnApplicants with gpa > 3.0 to UmnStudents and publish to kinesis
             umnApplicants
                 .filter { it.gpa >= 3.0 }
                 .also { log.info("Admitted ${it.size} / ${umnApplicants.size} applicants to University of Minnesota!") }
-                .forEach {
-                    publishObjectToS3Bucket(
-                        bucketName = outputBucketName,
-                        s3 = s3,
-                        umnStudent = UmnStudent(
-                            umnApplicant = it,
-                            umnId = UUID.randomUUID().toString(),
-                            admissionTimeStamp = Instant.now(),
-                        )
+                .map {
+                    UmnStudent(
+                        umnApplicant = it,
+                        umnId = UUID.randomUUID().toString(),
+                        admissionTimeStamp = Instant.now()
                     )
+                }
+                .also {
+                    val putRecordsRequest = createPutRecordsRequest(it, outputStreamName)
+                    kinesis.putRecords(putRecordsRequest)
                 }
 
             log.info("Finished Processing ${umnApplicants.size} umn applicants!")
@@ -88,34 +87,20 @@ object UmnAdmissionsApplication {
         }
     }
 
-    /**
-     * Given a stream name, retrieves a [GetShardIteratorResult] for the first shard of the kinesis stream
-     * using the applications kinesis client.
-     */
-    private fun getShardIterator(streamName: String, kinesis: AmazonKinesis): String? {
-        // Get all shards of the kinesis stream
-        val listShardsRequest = ListShardsRequest().withStreamName(streamName)
-        val listShardResult = kinesis.listShards(listShardsRequest)
+    @OptIn(ExperimentalTime::class)
+    private inline fun <reified T> createPutRecordsRequest(objects: List<T>, outputStreamName: String): PutRecordsRequest {
+        val putRecordsRequestEntries = mutableListOf<PutRecordsRequestEntry>()
+        objects.forEach {
+            val (serialized, serializationTime) = measureTimedValue { ObjectMapper.mapper.writeValueAsString(it) }
+            putRecordsRequestEntries += PutRecordsRequestEntry()
+                .withData(ByteBuffer.wrap(serialized.toByteArray(Charsets.UTF_8)))
+                .withPartitionKey(serializationTime.inWholeMilliseconds.toString())
+        }
 
-        // Create a shard iterator request for the first shard (assumes kinesis stream only has one shard).
-        val getShardIteratorRequest = GetShardIteratorRequest()
-            .withStreamName(streamName)
-            .withShardId(listShardResult.shards.first().shardId)
-            .withShardIteratorType(ShardIteratorType.LATEST)
-
-        // Return Shard Iterator for the kinesis shard
-        return kinesis.getShardIterator(getShardIteratorRequest).shardIterator
+        return PutRecordsRequest()
+            .withRecords(putRecordsRequestEntries)
+            .withStreamName(outputStreamName)
     }
-
-    /**
-     * Given a s3 bucket name, [AmazonS3] client and [UmnStudent] object publishes object to the specified bucket.
-     */
-    private fun publishObjectToS3Bucket(bucketName: String, s3: AmazonS3, umnStudent: UmnStudent) =
-        s3.putObject(
-            bucketName, // Bucket Name
-            umnStudent.umnId, // Object Key
-            mapper.writeValueAsString(umnStudent) // Payload
-        )
 
     private fun handleException(e: Exception) =
         when (e) {

@@ -2,17 +2,13 @@ package com.msse.seng5811
 
 import com.amazonaws.AbortedException
 import com.amazonaws.services.kinesis.AmazonKinesis
-import com.amazonaws.services.kinesis.model.PutRecordsRequest
-import com.amazonaws.services.kinesis.model.PutRecordsRequestEntry
-import com.amazonaws.services.s3.AmazonS3
-import com.amazonaws.services.s3.model.ListObjectsRequest
-import com.amazonaws.util.IOUtils
+import com.amazonaws.services.kinesis.model.*
 import com.msse.seng5811.localstack.kinesis.LocalKinesisStreams
 import com.msse.seng5811.localstack.kinesis.LocalstackKinesisUtility
 import com.msse.seng5811.utils.ObjectMapper
-import com.msse.seng5811.localstack.s3.LocalS3Buckets
-import com.msse.seng5811.localstack.s3.LocalstackS3Utility
 import com.msse.seng5811.utils.within
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeEach
@@ -29,10 +25,11 @@ import kotlin.time.measureTimedValue
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class UmnAdmissionsApplicationSystemTest {
     private val kinesis = LocalstackKinesisUtility.getKinesisClient()
-    private val s3 = LocalstackS3Utility.getS3Client()
     private val testInputStream = LocalKinesisStreams.INPUT_STREAM
-    private val testOutputBucket = LocalS3Buckets.OUTPUT_BUCKET
+    private val testOutputStream = LocalKinesisStreams.OUTPUT_STREAM
     private var daemonThread: Thread = Thread()
+    private val mapper = ObjectMapper.mapper
+
 
     companion object {
         val log: Logger = LoggerFactory.getLogger(UmnAdmissionsApplicationSystemTest::class.java)
@@ -45,15 +42,14 @@ class UmnAdmissionsApplicationSystemTest {
         try { daemonThread.interrupt() } catch (e: AbortedException) { log.info("End of test.") }
 
         // Cleanup
-        LocalstackS3Utility.refreshS3Bucket(testOutputBucket)
         LocalstackKinesisUtility.refreshKinesisStream(testInputStream)
+        LocalstackKinesisUtility.refreshKinesisStream(testOutputStream)
         log.info("Cleaned up test objects!")
     }
 
     @Test
     fun `umnAdmissionsApplication -- mix of eligible and ineligible applicants -- only eligible applicants are admitted`() {
         // SETUP
-
         log.info("Starting UmnAdmissionsApplications System Test")
         val eligibleApplicants = createUmnApplicants(count = Random.nextInt(0, 50), eligible = true)
         val ineligibleApplicants = createUmnApplicants(count = Random.nextInt(0, 50), eligible = false)
@@ -64,19 +60,19 @@ class UmnAdmissionsApplicationSystemTest {
         // Start application under test.
         startApplication(
             inputStreamName = testInputStream,
-            outputBucketName = testOutputBucket,
+            outputStreamName = testOutputStream,
             kinesis = kinesis,
-            s3 = s3
         )
 
         // Publish applicants to kinesis
         val putRecordsRequest = createPutRecordsRequest<UmnApplicant>(allApplicants.shuffled())
         kinesis.putRecords(putRecordsRequest)
+        Thread.sleep(5000)
 
         // Verify we get expected results within 5 seconds
         within(Duration.ofSeconds(5)) {
-            // Retrieve output from S3.
-            val umnStudents: List<UmnStudent> = retrieveObjectsFromS3Bucket<UmnStudent>(s3, testOutputBucket)
+            // Retrieve output from Kinesis
+            val umnStudents: List<UmnStudent> = readObjectsFromKinesis<UmnStudent>()
 
             // Assert only and all eligible candidates are converted into UMN students
             assertThat(umnStudents.size).isEqualTo(eligibleApplicants.size)
@@ -95,33 +91,19 @@ class UmnAdmissionsApplicationSystemTest {
      */
     private fun startApplication(
         inputStreamName: String,
-        outputBucketName: String,
+        outputStreamName: String,
         kinesis: AmazonKinesis,
-        s3: AmazonS3
     ) {
         daemonThread = Thread {
             UmnAdmissionsApplication.start(
                 inputStreamName = inputStreamName,
-                outputBucketName = outputBucketName,
-                kinesis = kinesis,
-                s3 = s3
+                outputStreamName = outputStreamName,
+                kinesis = kinesis
             )
         }.also {
             it.isDaemon = true
             it.start()
         }
-    }
-
-    /**
-     * Retrieves [String] objects from a specific s3 bucket using a [AmazonS3] client and deserializes them to
-     * the supplied reified type [T].
-     */
-    private inline fun <reified T> retrieveObjectsFromS3Bucket(s3: AmazonS3, bucketName: String): List<T> {
-        val listObjectsResult = s3.listObjects(ListObjectsRequest().withBucketName(bucketName))
-        val keys = listObjectsResult.objectSummaries.map { it.key }
-        val s3Objects = keys.map { s3.getObject(bucketName, it) }
-        val s3ObjectContents = s3Objects.map { it.objectContent }
-        return s3ObjectContents.map { ObjectMapper.mapper.readValue(IOUtils.toString(it), T::class.java) }
     }
 
     /**
@@ -162,4 +144,42 @@ class UmnAdmissionsApplicationSystemTest {
             .withRecords(putRecordsRequestEntries)
             .withStreamName(testInputStream)
     }
+
+    private inline fun <reified T> readObjectsFromKinesis(): List<UmnStudent> {
+        val students = mutableListOf<UmnStudent>()
+        // Get Records from shard
+        val shardIterator = LocalstackKinesisUtility.getShardIterator(testOutputStream, kinesis)
+        val getRecordsResult = try {
+            val getRecordsRequest = GetRecordsRequest().withShardIterator(shardIterator)
+            kinesis.getRecords(getRecordsRequest)
+        } catch (e: Exception) {
+            handleException(e)
+            return emptyList()
+        }
+
+        // If no records are present proceed to the next shard iterator.
+        if (getRecordsResult.records.isEmpty()) {
+            return emptyList()
+        }
+
+        // Parse kinesis input records to UmnApplicant objects
+        getRecordsResult.records.map {
+            students += mapper.readValue(it.data.array(), UmnStudent::class.java)
+        }
+
+        return students
+    }
+
+    private fun handleException(e: Exception) =
+        when (e) {
+            is ResourceNotFoundException -> log.info("ShardId not found in stream!. Exception: $e")
+            is ProvisionedThroughputExceededException -> {
+                log.info("GetRecords ProvisionedThroughputExceededException. Delaying getRecords calls by 5s.")
+                runBlocking { delay(5000) }
+            }
+            is ResourceInUseException -> println("Resource Still in Use, try again.")
+            // Silence the AbortedException for when System Tests kill the thread after execution.
+            is AbortedException -> Unit // Do nothing
+            else -> log.info("Unexpected Amazon Kinesis Exception: $e")
+        }
 }
