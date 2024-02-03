@@ -6,6 +6,7 @@ import com.amazonaws.services.kinesis.model.*
 import com.msse.seng5811.localstack.kinesis.LocalKinesisStreams
 import com.msse.seng5811.localstack.kinesis.LocalstackKinesisUtility
 import com.msse.seng5811.utils.ObjectMapper
+import com.msse.seng5811.utils.eventuallyConsistent
 import com.msse.seng5811.utils.within
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -67,10 +68,10 @@ class UmnAdmissionsApplicationSystemTest {
         // Publish applicants to kinesis
         val putRecordsRequest = createPutRecordsRequest<UmnApplicant>(allApplicants.shuffled())
         kinesis.putRecords(putRecordsRequest)
-        Thread.sleep(5000)
+        Thread.sleep(1000)
 
         // Verify we get expected results within 5 seconds
-        within(Duration.ofSeconds(5)) {
+        eventuallyConsistent {
             // Retrieve output from Kinesis
             val umnStudents: List<UmnStudent> = readObjectsFromKinesis<UmnStudent>()
 
